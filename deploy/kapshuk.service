@@ -1,0 +1,21 @@
+# Капшук на ноутбуці з HA (user-служба). Ставить deploy/deploy.sh:
+#   ~/.config/systemd/user/kapshuk.service, далі systemctl --user enable --now kapshuk
+# База — ~/.local/share/kapshuk/kapshuk.db (там і токени Monobank, тож теку видно лише власнику).
+# Node саме з /snap/node/current/bin: /snap/bin/node переносить процес в окремий scope snap,
+# і після systemctl restart лишаються завислі копії.
+[Unit]
+Description=Капшук — сімейний бюджет (:8792, для HA — 127.0.0.1:8793)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/kapshuk
+Environment=DATA_DIR=%h/.local/share/kapshuk
+Environment=NODE_ENV=production
+EnvironmentFile=-%h/.config/kapshuk.env
+ExecStart=/snap/node/current/bin/node server/main.ts
+Restart=always
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

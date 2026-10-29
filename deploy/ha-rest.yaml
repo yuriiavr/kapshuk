@@ -1,0 +1,32 @@
+# Сенсори Капшука в Home Assistant: <config>/rest/kapshuk.yaml (rest: !include_dir_merge_list rest/),
+# застосувати — служба rest.reload. Капшук віддає їх лише на 127.0.0.1, тобто тільки HA на цьому ж ноутбуці.
+- resource: http://127.0.0.1:8793/sensors
+  scan_interval: 300
+  sensor:
+    - name: "Капшук: потреби, лишилось"
+      unique_id: kapshuk_needs_left
+      value_template: "{{ value_json.needs_left }}"
+      unit_of_measurement: "UAH"
+      device_class: monetary
+      icon: mdi:home-city-outline
+      json_attributes: [needs_spent, needs_unpaid, needs_unpaid_sum, needs_unpaid_titles, month]
+    - name: "Капшук: на себе, лишилось"
+      unique_id: kapshuk_wants_left
+      value_template: "{{ value_json.wants_left }}"
+      unit_of_measurement: "UAH"
+      device_class: monetary
+      icon: mdi:shopping-outline
+      json_attributes: [wants_spent, wants_free, month]
+    - name: "Капшук: ще відкласти"
+      unique_id: kapshuk_savings_left
+      value_template: "{{ value_json.savings_left }}"
+      unit_of_measurement: "UAH"
+      device_class: monetary
+      icon: mdi:piggy-bank-outline
+      json_attributes: [savings_saved, jars_total, month]
+    - name: "Капшук: у банках"
+      unique_id: kapshuk_jars_total
+      value_template: "{{ value_json.jars_total }}"
+      unit_of_measurement: "UAH"
+      device_class: monetary
+      icon: mdi:safe
