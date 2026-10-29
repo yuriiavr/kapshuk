@@ -34,8 +34,13 @@ export type Context = {
   ownIbans: Set<string>;
   familyNames: string[][];
   rules: Map<string, TxBucket>;
-  needs: { id: number; match: string[] }[];
+  needs: { id: number; match: string[]; amount: number }[];
 };
+
+// Платіж зі списку потреб упізнаємо не лише за словами, а й за сумою: «зняття готівки» на 500 ₴ — ще не оренда
+// на 21 000. Частину (оренда двома зняттями) теж беремо — сплачене тоді додається.
+const NEED_MIN = 0.3, NEED_MAX = 1.5;
+const fitsNeed = (paid: number, plan: number) => plan <= 0 || (paid >= plan * NEED_MIN && paid <= plan * NEED_MAX);
 
 const norm = (s: string) => s.toLowerCase().replace(/[ʼ'’`]/g, "'").replace(/\s+/g, ' ').trim();
 const words = (s: string) => norm(s).split(/[\s.,]+/).filter(Boolean);
@@ -54,15 +59,19 @@ export function loadContext(month: string): Context {
   const ibans = all<{ iban: string }>("SELECT iban FROM accounts WHERE iban IS NOT NULL AND iban <> ''");
   const members = all<{ name: string; mono_name: string | null }>('SELECT name, mono_name FROM members');
   const rules = all<{ pattern: string; bucket: TxBucket }>('SELECT pattern, bucket FROM rules');
-  const needs = all<{ id: number; match: string | null }>(
-    `SELECT id, match FROM needs WHERE match IS NOT NULL AND match <> '' AND start_month <= :month
-       AND (end_month IS NULL OR end_month > :month) AND (once_month IS NULL OR once_month = :month)`, { month });
+  const needs = all<{ id: number; match: string | null; amount: number }>(
+    `SELECT n.id, n.match,
+            COALESCE(nm.amount, (SELECT p.amount FROM need_prices p WHERE p.need_id = n.id AND p.from_month <= :month
+                                  ORDER BY p.from_month DESC LIMIT 1), n.amount) AS amount
+       FROM needs n LEFT JOIN need_months nm ON nm.need_id = n.id AND nm.month = :month
+      WHERE n.match IS NOT NULL AND n.match <> '' AND n.start_month <= :month
+        AND (n.end_month IS NULL OR n.end_month > :month) AND (n.once_month IS NULL OR n.once_month = :month)`, { month });
   return {
     jarTitles: jars.map((j) => norm(j.title)).filter((t) => t.length >= 3),
     ownIbans: new Set(ibans.map((a) => a.iban)),
     familyNames: members.flatMap((m) => [m.mono_name, m.name]).filter((n): n is string => !!n).map(words).filter((w) => w.length >= 2),
     rules: new Map(rules.map((r) => [r.pattern, r.bucket])),
-    needs: needs.map((n) => ({ id: n.id, match: n.match!.split(',').map(norm).filter(Boolean) })),
+    needs: needs.map((n) => ({ id: n.id, match: n.match!.split(',').map(norm).filter(Boolean), amount: n.amount })),
   };
 }
 
@@ -80,7 +89,7 @@ export function classify(t: RawTx, ctx: Context): Verdict {
   if (rule) return { bucket: rule, source: 'rule' };
 
   if (t.amount < 0) {
-    const need = ctx.needs.find((n) => n.match.some((word) => desc.includes(word) || counter.includes(word)));
+    const need = ctx.needs.find((n) => fitsNeed(-t.amount, n.amount) && n.match.some((word) => desc.includes(word) || counter.includes(word)));
     if (need) return { bucket: 'needs', source: 'need', needId: need.id };
   }
 

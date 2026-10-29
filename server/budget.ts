@@ -345,10 +345,13 @@ export function storeMonoItems(memberId: number, accountId: string, items: MonoI
         comment: it.comment ?? null, counter_name: raw.counter_name, counter_iban: raw.counter_iban, hold: it.hold ? 1 : 0,
         bucket: v.bucket, source: v.source, now: now(),
       });
-      // Платіж зі списку потреб — ставимо галочку «сплачено», якщо ще не стоїть
+      // Платіж зі списку потреб — ставимо галочку «сплачено»; ще одна частина того ж платежу з банку додається
       if (v.needId && !existed) {
         const need = needsFor(month).find((n) => n.id === v.needId);
         if (need && !need.paid) setNeedMonth(need.id, month, { paid: true, paid_amount: -it.amount, tx_id: it.id, paid_at: it.time });
+        else if (need?.tx_id) {
+          run('UPDATE need_months SET paid_amount = COALESCE(paid_amount, 0) + :add WHERE need_id = :id AND month = :month', { id: need.id, month, add: -it.amount });
+        }
       }
     }
   });

@@ -57,6 +57,23 @@ test('операції з банку: кошики, банки, перекази
   assert.equal(internet.tx_id, 't3');
 });
 
+test('оренда «зняттям готівки»: дрібне зняття не рахується, дві частини додаються', () => {
+  const dec = addMonths(M, 1);
+  const id = b.addNeed({ title: 'Оренда', amount: 2100000, match: 'Зняття готівки', month: dec });
+  const d = (day: number) => monthStart(dec) + day * 86400;
+  b.storeMonoItems(1, 'card1', [{ id: 'c1', time: d(1), amount: -50000, description: 'Зняття готівки: Банкомат', mcc: 6011, hold: false }]);
+  assert.equal(b.needsFor(dec).find((n) => n.id === id)!.paid, false);
+  assert.equal(b.transactions(dec).find((t) => t.id === 'c1')!.bucket, 'wants');
+  b.storeMonoItems(1, 'card1', [
+    { id: 'c2', time: d(2), amount: -1000000, description: 'Зняття готівки: Банкомат', mcc: 6011, hold: false },
+    { id: 'c3', time: d(2) + 60, amount: -1100000, description: 'Зняття готівки: Банкомат', mcc: 6011, hold: false },
+  ]);
+  const rent = b.needsFor(dec).find((n) => n.id === id)!;
+  assert.equal(rent.paid, true);
+  assert.equal(rent.paid_amount, 2100000);
+  b.removeNeed(id, dec);
+});
+
 test('виправлення запам\'ятовується для такого самого магазину', () => {
   b.setTxBucket('t2', 'needs', true);
   b.storeMonoItems(1, 'card1', [item('t7', 8, -40000, 'Кінотеатр', 7832)]);
