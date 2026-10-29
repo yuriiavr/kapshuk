@@ -119,13 +119,7 @@ export function buildMcp() {
       return b.wantsFor(null).map((w) => ({ title: w.title, price: uah(w.amount), url: w.url, note: w.note }));
     });
 
-  tool('kapshuk_add_expense',
-    'Записати витрату готівкою (або іншу, якої немає в Monobank), дохід чи відкладене на заощадження.',
-    {
-      amount: z.number().positive().describe('Сума, грн'), description: z.string(),
-      bucket: z.enum(['needs', 'wants', 'savings', 'income']).describe('needs/wants/savings як у бюджеті, income — дохід'),
-    }, false, ({ amount, description, bucket: bk }) => ({ id: b.addManualTx({ amount: kop(amount), description, bucket: bk }) }));
-
+  // Витрат голосом не записуємо: сім'я платить усе з Monobank, операції приходять звідти самі
   tool('kapshuk_move_money',
     'Перерозподілити гроші між кошиками на місяць: напр., «наступного місяця 12 500 із заощаджень на погашення кредиту» — ' +
     'from savings, to needs, as_payment true (тоді в потребах того місяця з\'явиться разовий платіж). ' +
@@ -138,15 +132,25 @@ export function buildMcp() {
       ({ id: b.addMove({ month: b.checkMonth(m), from, to, amount: kop(amount), note, as_need: as_payment }) }));
 
   tool('kapshuk_transactions',
-    'Останні операції місяця з Monobank і вручну, з кошиком кожної. Витрати — мінус, надходження — плюс.',
+    'Операції місяця з Monobank (усі витрати й надходження сім\'ї), з кошиком кожної. Витрати — мінус, надходження — плюс. ' +
+    'search — знайти за описом («сільпо», «аптека») і порахувати, скільки на це пішло за місяць.',
     {
       bucket: z.enum(['needs', 'wants', 'savings', 'income', 'internal', 'ignore']).optional(),
-      limit: z.number().int().min(1).max(50).default(10), month,
-    }, true, ({ bucket: bk, limit, month: m }) =>
-      b.transactions(b.checkMonth(m), bk, limit).map((t) => ({
-        date: new Date(t.time * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-        amount: uah(t.amount), description: t.description, bucket: t.bucket, who: t.member,
-      })));
+      search: z.string().optional().describe('Частина опису операції'),
+      limit: z.number().int().min(1).max(100).default(15), month,
+    }, true, ({ bucket: bk, search, limit, month: m }) => {
+      const q = search?.trim().toLowerCase();
+      const all = b.transactions(b.checkMonth(m), bk, 5000).filter((t) => !q || t.description.toLowerCase().includes(q));
+      return {
+        count: all.length,
+        spent: uah(-all.filter((t) => t.amount < 0).reduce((s, t) => s + t.amount, 0)),
+        received: uah(all.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+        latest: all.slice(0, limit).map((t) => ({
+          date: new Date(t.time * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
+          amount: uah(t.amount), description: t.description, bucket: t.bucket, who: t.member,
+        })),
+      };
+    });
 
   return server;
 }
