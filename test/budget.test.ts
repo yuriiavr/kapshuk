@@ -120,3 +120,18 @@ test('відсотки місяця мають давати 100', () => {
   b.setMonth(M, { reset: true });
   assert.equal(b.monthSummary(M).buckets.needs.pct, 50);
 });
+
+test('перекази: від фірми — дохід, між нашими картками Monobank — ні витрата, ні дохід', () => {
+  run("INSERT INTO accounts (id, member_id, kind, title, currency, balance, include) VALUES ('card2', 2, 'card', 'Біла', 980, 0, 1)");
+  const before = b.monthSummary(M);
+  b.storeMonoItems(1, 'card1', [
+    item('p1', 10, 2900000, 'Від: Education', 6012, { counterName: 'Education' }), // зарплата, не «повернення» в потреби
+    item('p2', 11, -2100000, 'Переказ на картку', 4829), // Юра → Олі
+    item('p3', 12, 21000, 'Скасування. Сільпо', 5411), // справжнє повернення — у потреби
+  ]);
+  b.storeMonoItems(2, 'card2', [item('p4', 11, 2100000, 'З Чорної картки', 4829, { time: at(11) + 1 })]);
+  const s = b.monthSummary(M);
+  assert.equal(s.income_actual - before.income_actual, 2900000);
+  assert.equal(s.buckets.needs.spent - before.buckets.needs.spent, -21000);
+  assert.equal(s.buckets.wants.spent, before.buckets.wants.spent);
+});

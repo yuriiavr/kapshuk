@@ -2,7 +2,7 @@
 // а витрачене рахуємо з операцій. Спільне для інтерфейсу (api.ts) і Адольфа (mcp.ts).
 import { randomUUID } from 'node:crypto';
 import { all, BUCKETS, getDefaults, one, run, tx, TX_BUCKETS, type Bucket, type TxBucket } from './db.ts';
-import { classify, loadContext, rulePattern } from './classify.ts';
+import { classify, loadContext, rulePattern, TRANSFER_MCC } from './classify.ts';
 import { addMonths, MONTH_RE, monthOf, monthRange, now, thisMonth } from './time.ts';
 
 export class UserError extends Error {}
@@ -345,6 +345,7 @@ export function storeMonoItems(memberId: number, accountId: string, items: MonoI
         comment: it.comment ?? null, counter_name: raw.counter_name, counter_iban: raw.counter_iban, hold: it.hold ? 1 : 0,
         bucket: v.bucket, source: v.source, now: now(),
       });
+      if (raw.mcc != null && TRANSFER_MCC.has(raw.mcc)) pairInternal(it.id);
       // Платіж зі списку потреб — ставимо галочку «сплачено»; ще одна частина того ж платежу з банку додається
       if (v.needId && !existed) {
         const need = needsFor(month).find((n) => n.id === v.needId);
@@ -356,6 +357,23 @@ export function storeMonoItems(memberId: number, accountId: string, items: MonoI
     }
   });
   return added;
+}
+
+// Переказ між нашими картками Monobank («Переказ на картку» в одного, «З Чорної картки» в іншого) приходить
+// без імені й IBAN. Упізнаємо за парою: та сама сума з іншим знаком на іншій нашій картці в межах двох хвилин.
+// Та сама умова — у міграції 2 (db.ts) для вже збережених операцій
+const PAIR_SECONDS = 120;
+const TRANSFER_MCC_SQL = [...TRANSFER_MCC].join(', ');
+function pairInternal(id: string) {
+  const t = one<{ account_id: string; time: number; amount: number }>(
+    "SELECT account_id, time, amount FROM transactions WHERE id = :id AND bucket_source = 'auto' AND bucket IN ('income', 'wants', 'needs', 'internal')", { id });
+  if (!t || !t.amount) return;
+  const twin = one<{ id: string }>(
+    `SELECT id FROM transactions WHERE account_id <> :account AND amount = :amount AND ABS(time - :time) <= ${PAIR_SECONDS}
+       AND bucket_source = 'auto' AND bucket IN ('income', 'wants', 'needs', 'internal') AND mcc IN (${TRANSFER_MCC_SQL})
+     ORDER BY ABS(time - :time) LIMIT 1`,
+    { account: t.account_id, amount: -t.amount, time: t.time });
+  if (twin) run("UPDATE transactions SET bucket = 'internal' WHERE id IN (:a, :b)", { a: id, b: twin.id });
 }
 
 /** Перед зміною типового плану: минулі місяці лишаються з тим, за яким жили (отримують свій запис) */

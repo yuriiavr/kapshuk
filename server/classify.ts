@@ -24,7 +24,7 @@ const NEEDS_MCC = new Set([
   5995, 742, 9402, 4214, 4215,
 ]);
 // Перекази людям, готівка, поповнення — тип магазину нічого не каже
-const TRANSFER_MCC = new Set([4829, 6010, 6011, 6051, 6538, 6540]);
+export const TRANSFER_MCC = new Set([4829, 6010, 6011, 6051, 6538, 6540]);
 
 // Банки Monobank на картці: «На банку …», «З банки …», «Поповнення банки …»
 const JAR_RE = /(^|\s)(на|з|із|до)\s+банк[уиі]\b|поповнення банки|зняття з банки/i;
@@ -95,8 +95,9 @@ export function classify(t: RawTx, ctx: Context): Verdict {
 
   const merchant = t.mcc != null && !TRANSFER_MCC.has(t.mcc);
   if (t.amount > 0) {
-    // Повернення в магазин зменшує витрати того ж кошика, решта надходжень — дохід
-    if (merchant) return { bucket: NEEDS_MCC.has(t.mcc!) ? 'needs' : 'wants', source: 'auto' };
+    // Повернення в магазин зменшує витрати того ж кошика, решта надходжень — дохід.
+    // Переказ від людини чи фірми («Від: Education», з картки іншого банку — MCC 6012) — не повернення
+    if (merchant && !counter && t.mcc !== 6012) return { bucket: NEEDS_MCC.has(t.mcc!) ? 'needs' : 'wants', source: 'auto' };
     return { bucket: 'income', source: 'auto' };
   }
   if (merchant && NEEDS_MCC.has(t.mcc!)) return { bucket: 'needs', source: 'auto' };

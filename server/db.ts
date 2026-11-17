@@ -72,6 +72,18 @@ const MIGRATIONS = [
 
   CREATE TABLE sessions (token TEXT PRIMARY KEY, created_at INTEGER NOT NULL, seen_at INTEGER NOT NULL);
   `,
+  // Перекласти вже збережені операції за новими правилами (classify.ts і pairInternal у budget.ts):
+  // вхідний переказ від людини чи фірми — дохід, а не повернення в магазин;
+  // переказ між нашими картками (пара з протилежною сумою за дві хвилини) — не витрата й не дохід
+  `
+  UPDATE transactions SET bucket = 'income'
+    WHERE bucket_source = 'auto' AND amount > 0 AND bucket IN ('needs', 'wants') AND (COALESCE(counter_name, '') <> '' OR mcc = 6012);
+  UPDATE transactions SET bucket = 'internal'
+    WHERE bucket_source = 'auto' AND bucket IN ('income', 'wants', 'needs') AND mcc IN (4829, 6010, 6011, 6051, 6538, 6540)
+      AND EXISTS (SELECT 1 FROM transactions o
+        WHERE o.account_id <> transactions.account_id AND o.amount = -transactions.amount AND ABS(o.time - transactions.time) <= 120
+          AND o.bucket_source = 'auto' AND o.bucket IN ('income', 'wants', 'needs', 'internal') AND o.mcc IN (4829, 6010, 6011, 6051, 6538, 6540));
+  `,
 ];
 
 const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
