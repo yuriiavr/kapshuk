@@ -1,4 +1,4 @@
-// На себе: покупки для сім'ї, заплановані на місяць, і вішліст — бажане без дати
+// Хочу купити: покупки, заплановані на місяць, і вішліст — бажане без дати
 import { useState } from 'react';
 import { api, type Want } from '../api.ts';
 import { money, monthIn } from '../format.ts';
@@ -10,14 +10,12 @@ export function Wants() {
   const { data, month, act } = useApp();
   const s = data.summary;
   const [edit, setEdit] = useState<{ want: Want | null; wish: boolean } | null>(null);
-  const free = s.buckets.wants.left - s.wants_plan.left;
 
   return (
     <section>
       <div className="sum">
-        <span>Витрачено <b>{money(s.buckets.wants.spent)}</b> з {money(s.buckets.wants.allocated)}</span>
+        <span>Куплено <b>{s.wants_plan.bought_count} з {s.wants_plan.count}</b></span>
         <span>заплановано ще <b>{money(s.wants_plan.left)}</b></span>
-        <span>вільно <b className={free < 0 ? 'neg' : ''}>{money(free)}</b></span>
       </div>
 
       <h3>Заплановано в {monthIn(month)}</h3>
@@ -27,7 +25,7 @@ export function Wants() {
         <ul className="list">
           {s.wants.map((w) => (
             <li key={w.id} className={w.bought ? 'done' : ''}>
-              <Check checked={w.bought} label={`${w.title}: куплено`} color="var(--wants)"
+              <Check checked={w.bought} label={`${w.title}: куплено`} color="var(--accent)"
                 onChange={(bought) => act(() => api.patch(`/api/wants/${w.id}`, { bought }))} />
               <button className="row-main" onClick={() => setEdit({ want: w, wish: false })}>
                 <span className="t">{w.title}</span>

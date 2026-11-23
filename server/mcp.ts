@@ -3,16 +3,19 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as b from './budget.ts';
-import { BUCKETS } from './db.ts';
-import { addMonths, thisMonth } from './time.ts';
+import { monthItems, topMerchants } from './items.ts';
+import { all } from './db.ts';
+import { CATEGORIES, CATEGORY_KEYS, ITEM_GROUPS, isItemGroup } from './categories.ts';
+import { addMonths, monthRange, thisMonth } from './time.ts';
 import { CURRENCY } from './monobank.ts';
 
-const BUCKET_NAMES = { needs: 'базові потреби', wants: 'на себе', savings: 'заощадження' } as const;
 const uah = (kop: number | null | undefined) => (kop == null ? null : Math.round(kop) / 100);
 const kop = (hrn: number) => Math.round(hrn * 100);
+const cat = (c: string | null) => (c && c in CATEGORIES ? CATEGORIES[c as keyof typeof CATEGORIES].title : null);
 
-const bucket = z.enum(['needs', 'wants', 'savings']).describe('needs — базові потреби, wants — на себе (покупки для сім\'ї, кафе, розваги), savings — заощадження');
 const month = z.string().regex(/^\d{4}-\d{2}$/).optional().describe('Місяць РРРР-ММ; без нього — поточний');
+const category = z.enum(CATEGORY_KEYS as [string, ...string[]])
+  .describe(`Категорія витрат: ${CATEGORY_KEYS.map((k) => `${k} — ${CATEGORIES[k].title}`).join(', ')}`);
 
 function pick<T extends { id: number; title: string }>(items: T[], query: string, what: string): T {
   const q = query.trim().toLowerCase();
@@ -25,26 +28,24 @@ function pick<T extends { id: number; title: string }>(items: T[], query: string
 
 function overview(m: string) {
   const s = b.monthSummary(m);
-  const free = { needs: s.buckets.needs.left - s.needs_plan.left, wants: s.buckets.wants.left - s.wants_plan.left, savings: s.buckets.savings.left };
+  const it = monthItems(m);
   return {
     month: s.month,
-    income_plan: uah(s.income),
+    spent: uah(s.spent),
     income_received: uah(s.income_actual),
-    buckets: Object.fromEntries(BUCKETS.map((k) => [BUCKET_NAMES[k], {
-      percent: s.buckets[k].pct, plan: uah(s.buckets[k].allocated), [k === 'savings' ? 'saved' : 'spent']: uah(s.buckets[k].spent),
-      left: uah(s.buckets[k].left), [k === 'savings' ? 'to_save' : 'free_after_plan']: uah(free[k]),
-    }])),
-    needs_unpaid: s.needs.filter((n) => !n.paid).map((n) => ({ title: n.title, amount: uah(n.amount) })),
-    needs_paid: s.needs.filter((n) => n.paid).map((n) => n.title),
+    put_to_jars: uah(s.saved),
+    by_category: s.categories.filter((c) => c.total > 0).map((c) => ({ category: CATEGORIES[c.category].title, spent: uah(c.total), payments: c.n })),
+    top_places: topMerchants(m, 5).map((t) => ({ where: t.description, spent: uah(t.total), times: t.n })),
+    receipts: { purchases_with_items: it.purchases, covered: uah(it.covered) },
+    payments_unpaid: s.needs.filter((n) => !n.paid).map((n) => ({ title: n.title, amount: uah(n.amount) })),
+    payments_paid: s.needs.filter((n) => n.paid).map((n) => n.title),
     purchases_planned: s.wants.filter((w) => !w.bought).map((w) => ({ title: w.title, price: uah(w.amount) })),
-    moves: s.moves.map((mv) => ({ from: BUCKET_NAMES[mv.from], to: BUCKET_NAMES[mv.to], amount: uah(mv.amount), note: mv.note })),
     jars: s.jars.map((j) => ({ title: j.title, balance: uah(j.balance), goal: uah(j.goal), currency: CURRENCY[j.currency] ?? j.currency, owner: j.member })),
-    unchecked_transactions: s.unchecked,
   };
 }
 
 export function buildMcp() {
-  const server = new McpServer({ name: 'kapshuk', version: '0.1.0' });
+  const server = new McpServer({ name: 'kapshuk', version: '0.2.0' });
   const tool = (name: string, description: string, inputSchema: z.ZodRawShape, readOnly: boolean, run: (args: any) => unknown) =>
     server.registerTool(name, { description, inputSchema, annotations: { readOnlyHint: readOnly } }, async (args) => {
       try {
@@ -56,13 +57,44 @@ export function buildMcp() {
     });
 
   tool('kapshuk_overview',
-    'Сімейний бюджет «Капшук» за місяць: скільки заплановано, витрачено й лишилось у кожному кошику (базові потреби, на себе, заощадження), ' +
-    'які обов\'язкові платежі ще не сплачені, заплановані покупки, перерозподіли й баланси банок Monobank. ' +
-    'free_after_plan — скільки вільно після ще не сплачених потреб чи не куплених запланованих покупок.',
+    'Витрати сім\'ї в «Капшуку» за місяць: скільки витрачено й на що — по категоріях (продукти, кафе, таксі…) і де найбільше, ' +
+    'скільки надійшло, які постійні платежі ще не сплачені, заплановані покупки й баланси банок Monobank. ' +
+    'Перший вибір для «скільки витратили (на продукти, на кафе…)». Бюджет на кошики не ділимо.',
     { month }, true, ({ month: m }) => overview(b.checkMonth(m)));
 
+  tool('kapshuk_purchases',
+    'Що саме купували — товари з чеків і вписані до операцій. search («кава», «сир», «чипси») — скільки разів і на яку суму; ' +
+    'без search — групи товарів і що купували найчастіше. Відомо лише для покупок, до яких додали чек чи товари.',
+    { search: z.string().optional().describe('Назва товару чи її частина'), month }, true, ({ search, month: m }) => {
+      const mm = b.checkMonth(m);
+      const it = monthItems(mm);
+      const base = { covered: `${uah(it.covered)} з ${uah(it.spent)} грн витрат розписано по товарах`, purchases_with_items: it.purchases };
+      const q = search?.trim().toLowerCase();
+      if (!q) {
+        return {
+          ...base,
+          groups: it.groups.map((g) => ({ group: g.title, spent: uah(g.total), top: g.top.slice(0, 5).map((t) => ({ item: t.title, spent: uah(t.total) })) })),
+          bought_often: it.frequent.map((t) => ({ item: t.title, times: t.n, spent: uah(t.total) })),
+        };
+      }
+      const [start, end] = monthRange(mm);
+      const rows = all<{ name: string; title: string | null; item_group: string | null; amount: number; time: number; description: string }>(
+        `SELECT i.name, i.title, i.item_group, i.amount, t.time, t.description FROM items i JOIN transactions t ON t.id = i.tx_id
+          WHERE t.bucket = 'spend' AND t.time >= :start AND t.time < :end ORDER BY t.time DESC`, { start, end })
+        .filter((r) => r.name.toLowerCase().includes(q) || (r.title ?? '').toLowerCase().includes(q));
+      return {
+        ...base,
+        found: rows.length,
+        spent: uah(rows.reduce((s, r) => s + r.amount, 0)),
+        latest: rows.slice(0, 10).map((r) => ({
+          item: r.name, group: isItemGroup(r.item_group) ? ITEM_GROUPS[r.item_group] : null, spent: uah(r.amount), where: r.description,
+          date: new Date(r.time * 1000).toLocaleDateString('uk-UA', { timeZone: 'Europe/Kyiv', day: 'numeric', month: 'short' }),
+        })),
+      };
+    });
+
   tool('kapshuk_mark_paid',
-    'Позначити обов\'язковий платіж зі списку базових потреб (оренда, комуналка, інтернет…) сплаченим або несплаченим.',
+    'Позначити постійний платіж зі списку (оренда, комуналка, інтернет…) сплаченим або несплаченим.',
     {
       title: z.string().describe('Назва або її частина: «інтернет», «оренда»'),
       paid: z.boolean().default(true),
@@ -76,7 +108,7 @@ export function buildMcp() {
     });
 
   tool('kapshuk_add_need',
-    'Додати платіж до базових потреб: постійний (щомісяця) або разовий лише на один місяць.',
+    'Додати постійний платіж (щомісяця) або разовий лише на один місяць — у список платежів з галочкою «сплачено».',
     {
       title: z.string(), amount: z.number().nonnegative().describe('Сума, грн'),
       once: z.boolean().default(false).describe('true — разово лише цього (або вказаного) місяця'),
@@ -88,7 +120,7 @@ export function buildMcp() {
     });
 
   tool('kapshuk_add_purchase',
-    'Запланувати покупку «на себе» для сім\'ї на цей чи наступний місяць або додати її у вішліст (бажане без дати).',
+    'Запланувати покупку на цей чи наступний місяць або додати її у вішліст (бажане без дати).',
     {
       title: z.string(), price: z.number().nonnegative().optional().describe('Орієнтовна ціна, грн'),
       when: z.enum(['this_month', 'next_month', 'wishlist']).default('this_month'),
@@ -119,35 +151,27 @@ export function buildMcp() {
       return b.wantsFor(null).map((w) => ({ title: w.title, price: uah(w.amount), url: w.url, note: w.note }));
     });
 
-  // Витрат голосом не записуємо: сім'я платить усе з Monobank, операції приходять звідти самі
-  tool('kapshuk_move_money',
-    'Перерозподілити гроші між кошиками на місяць: напр., «наступного місяця 12 500 із заощаджень на погашення кредиту» — ' +
-    'from savings, to needs, as_payment true (тоді в потребах того місяця з\'явиться разовий платіж). ' +
-    'Чи вистачить грошей у кошику «from», перевір через kapshuk_overview і скажи людині.',
-    {
-      from: bucket, to: bucket, amount: z.number().positive().describe('Сума, грн'), month,
-      note: z.string().optional().describe('На що: «погашення кредиту»'),
-      as_payment: z.boolean().default(false).describe('Додати разовий платіж у базові потреби (лише коли to = needs)'),
-    }, false, ({ from, to, amount, month: m, note, as_payment }) =>
-      ({ id: b.addMove({ month: b.checkMonth(m), from, to, amount: kop(amount), note, as_need: as_payment }) }));
-
+  // Витрат голосом не записуємо: сім'я платить усе з Monobank, операції приходять звідти самі, а товари — з чеків
   tool('kapshuk_transactions',
-    'Операції місяця з Monobank (усі витрати й надходження сім\'ї), з кошиком кожної. Витрати — мінус, надходження — плюс. ' +
-    'search — знайти за описом («сільпо», «аптека») і порахувати, скільки на це пішло за місяць.',
+    'Операції місяця з Monobank і вручну (усі витрати й надходження сім\'ї), з категорією кожної й товарами, якщо їх записали. ' +
+    'Витрати — мінус, надходження — плюс. Операції категорії (продукти, кафе…) — через category, а не search. ' +
+    'search — назва магазину чи товару («сільпо», «аптека», «кава»): знайти й порахувати, скільки на це пішло.',
     {
-      bucket: z.enum(['needs', 'wants', 'savings', 'income', 'internal', 'ignore']).optional(),
-      search: z.string().optional().describe('Частина опису операції'),
+      kind: z.enum(['spend', 'income', 'savings', 'internal', 'ignore']).optional()
+        .describe('spend — витрати, income — дохід, savings — у банки, internal — перекази між своїми, ignore — не рахуються'),
+      category: category.optional(),
+      search: z.string().optional().describe('Частина опису операції чи назви товару'),
       limit: z.number().int().min(1).max(100).default(15), month,
-    }, true, ({ bucket: bk, search, limit, month: m }) => {
-      const q = search?.trim().toLowerCase();
-      const all = b.transactions(b.checkMonth(m), bk, 5000).filter((t) => !q || t.description.toLowerCase().includes(q));
+    }, true, ({ kind, category: c, search, limit, month: m }) => {
+      const list = b.transactions(b.checkMonth(m), { bucket: kind, category: c, search }, 5000);
       return {
-        count: all.length,
-        spent: uah(-all.filter((t) => t.amount < 0).reduce((s, t) => s + t.amount, 0)),
-        received: uah(all.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-        latest: all.slice(0, limit).map((t) => ({
+        count: list.length,
+        // Як у підсумку місяця: повернення в магазин зменшують витрати
+        spent: uah(-list.filter((t) => t.bucket === 'spend').reduce((s, t) => s + t.amount, 0)),
+        received: uah(list.filter((t) => t.amount > 0 && t.bucket === 'income').reduce((s, t) => s + t.amount, 0)),
+        latest: list.slice(0, limit).map((t) => ({
           date: new Date(t.time * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-          amount: uah(t.amount), description: t.description, bucket: t.bucket, who: t.member,
+          amount: uah(t.amount), description: t.description, kind: t.bucket, category: cat(t.category), who: t.member, items: t.items_text,
         })),
       };
     });

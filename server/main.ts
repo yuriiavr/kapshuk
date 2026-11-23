@@ -1,4 +1,4 @@
-// Капшук — сімейний бюджет. Два HTTP-сервери:
+// Капшук — сімейні витрати: що й куди, товари з чеків. Два HTTP-сервери:
 // • HOST:PORT у локальній мережі — інтерфейс (dist/web), вхід і /api для нього;
 // • 127.0.0.1:MCP_PORT — лише для HA на цьому ж ноутбуці: /mcp для Адольфа і /sensors для сенсорів HA.
 import http from 'node:http';
@@ -10,7 +10,9 @@ import * as auth from './auth.ts';
 import { handleApi } from './api.ts';
 import { buildMcp } from './mcp.ts';
 import { startSync } from './monobank.ts';
-import { monthSummary } from './budget.ts';
+import { backfillCategories, monthSummary } from './budget.ts';
+import { cleanupImages } from './items.ts';
+import { CATEGORIES } from './categories.ts';
 import { thisMonth } from './time.ts';
 
 const MCP_HOST = '127.0.0.1';
@@ -127,14 +129,14 @@ function sensors() {
   const uah = (k: number) => Math.round(k) / 100;
   return {
     month: s.month,
-    income: uah(s.income),
-    needs_left: uah(s.buckets.needs.left), wants_left: uah(s.buckets.wants.left), savings_left: uah(s.buckets.savings.left),
-    needs_spent: uah(s.buckets.needs.spent), wants_spent: uah(s.buckets.wants.spent), savings_saved: uah(s.buckets.savings.spent),
-    needs_unpaid: s.needs.filter((n) => !n.paid).length, needs_unpaid_sum: uah(s.needs_plan.left),
-    needs_unpaid_titles: s.needs.filter((n) => !n.paid).map((n) => n.title).join(', '),
-    wants_free: uah(s.buckets.wants.left - s.wants_plan.left),
+    spent: uah(s.spent),
+    income: uah(s.income_actual),
+    saved: uah(s.saved),
+    top_categories: s.categories.filter((c) => c.total > 0).slice(0, 3).map((c) => `${CATEGORIES[c.category].title} ${Math.round(c.total / 100)}`).join(', '),
+    payments_unpaid: s.needs.filter((n) => !n.paid).length, payments_unpaid_sum: uah(s.needs_plan.left),
+    payments_unpaid_titles: s.needs.filter((n) => !n.paid).map((n) => n.title).join(', '),
+    planned_left: uah(s.wants_plan.left),
     jars_total: uah(s.jars.filter((j) => j.currency === 980).reduce((sum, j) => sum + j.balance, 0)),
-    unchecked: s.unchecked,
   };
 }
 
@@ -166,4 +168,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(MCP_PORT, MCP_HOST, () => console.log(`Капшук для HA: http://${MCP_HOST}:${MCP_PORT}/mcp, /sensors`));
 
+backfillCategories();
+cleanupImages();
+setInterval(cleanupImages, 12 * 3600e3).unref();
 startSync();

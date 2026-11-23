@@ -4,7 +4,7 @@
 # Node саме з /snap/node/current/bin: /snap/bin/node переносить процес в окремий scope snap,
 # і після systemctl restart лишаються завислі копії.
 [Unit]
-Description=Капшук — сімейний бюджет (:8792, для HA — 127.0.0.1:8793)
+Description=Капшук — витрати сім'ї (:8792, для HA — 127.0.0.1:8793)
 After=network-online.target
 
 [Service]

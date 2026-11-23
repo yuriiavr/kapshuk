@@ -41,3 +41,20 @@ export function monthStart(month: string): number {
 }
 
 export const monthRange = (month: string): [number, number] => [monthStart(month), monthStart(addMonths(month, 1))];
+
+/** Дата «2026-11-17» і час «14:05» за Києвом → unix-секунди; погана дата — null */
+export function kyivUnix(date: string, hm?: string | null): number | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!d) return null;
+  const t = /^(\d{1,2}):(\d{2})/.exec(hm ?? '');
+  const [y, m, day] = [Number(d[1]), Number(d[2]), Number(d[3])];
+  const [h, min] = t ? [Number(t[1]), Number(t[2])] : [12, 0];
+  if (m < 1 || m > 12 || day < 1 || day > 31 || h > 23 || min > 59) return null;
+  const target = Date.UTC(y, m - 1, day, h, min) / 1000;
+  let guess = target;
+  for (let i = 0; i < 2; i++) {
+    const p = kyivParts(guess);
+    guess -= Date.UTC(p.y, p.m - 1, p.d, p.h, p.min, p.s) / 1000 - target;
+  }
+  return guess;
+}

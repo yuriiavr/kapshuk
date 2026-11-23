@@ -1,14 +1,13 @@
 // SQLite Капшука: один файл у DATA_DIR. Суми — цілі копійки, час — unix-секунди, місяць — 'YYYY-MM' за Києвом.
-// Кошики бюджету: needs — базові потреби (50%), wants — на себе (30%), savings — заощадження (20%).
-// Операції ще бувають income (дохід), internal (переказ між своїми картками) і ignore (не рахувати).
+// Тип операції (bucket): spend — витрата (з категорією за магазином, див. categories.ts), savings — у банку,
+// income — дохід, internal — переказ між своїми, ignore — не рахувати.
+// До 2026-11-23 витрати ділились на кошики 50/30/20 (needs/wants); міграція 3 звела їх у spend.
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.ts';
 
-export const BUCKETS = ['needs', 'wants', 'savings'] as const;
-export type Bucket = (typeof BUCKETS)[number];
-export const TX_BUCKETS = [...BUCKETS, 'income', 'internal', 'ignore'] as const;
+export const TX_BUCKETS = ['spend', 'savings', 'income', 'internal', 'ignore'] as const;
 export type TxBucket = (typeof TX_BUCKETS)[number];
 
 mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
@@ -84,6 +83,32 @@ const MIGRATIONS = [
         WHERE o.account_id <> transactions.account_id AND o.amount = -transactions.amount AND ABS(o.time - transactions.time) <= 120
           AND o.bucket_source = 'auto' AND o.bucket IN ('income', 'wants', 'needs', 'internal') AND o.mcc IN (4829, 6010, 6011, 6051, 6538, 6540));
   `,
+  // 2026-11-23: бюджет більше не ділимо на кошики. Витрата — spend з категорією за магазином (порожню категорію
+  // старих операцій заповнює backfillCategories у budget.ts). Товари з чеків і вручну, фото чеків, поради ШІ на місяць
+  `
+  ALTER TABLE transactions ADD COLUMN category TEXT;
+  UPDATE transactions SET bucket = 'spend' WHERE bucket IN ('needs', 'wants');
+  ALTER TABLE rules ADD COLUMN category TEXT;
+  UPDATE rules SET bucket = 'spend' WHERE bucket IN ('needs', 'wants');
+
+  -- Чек до операції: магазин, час і сума з чека; image — назва файлу фото в DATA_DIR/receipts
+  CREATE TABLE receipts (
+    id INTEGER PRIMARY KEY, tx_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    store TEXT, time INTEGER, total INTEGER, image TEXT, created_at INTEGER NOT NULL);
+  CREATE INDEX receipts_tx ON receipts (tx_id);
+
+  -- Що саме купили в операції. title — загальна назва («Молоко») для підсумку, item_group — група з categories.ts.
+  -- amount — сума рядка в копійках (додатна); source: ai (з чека чи розкладено ШІ) або user
+  CREATE TABLE items (
+    id INTEGER PRIMARY KEY, tx_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    receipt_id INTEGER REFERENCES receipts(id) ON DELETE SET NULL,
+    name TEXT NOT NULL, title TEXT, item_group TEXT, qty REAL, amount INTEGER NOT NULL,
+    sort INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+  CREATE INDEX items_tx ON items (tx_id);
+
+  -- Порада ШІ, від чого можна відмовитись, — одна на місяць
+  CREATE TABLE advice (month TEXT PRIMARY KEY, text TEXT NOT NULL, created_at INTEGER NOT NULL);
+  `,
 ];
 
 const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -111,18 +136,4 @@ export function tx<T>(fn: () => T): T {
     db.exec('ROLLBACK');
     throw err;
   }
-}
-
-// ── Типові налаштування ──
-const DEFAULTS = { income: '0', needs_pct: '50', wants_pct: '30', savings_pct: '20' };
-export type Defaults = { income: number; needs_pct: number; wants_pct: number; savings_pct: number };
-
-export function getDefaults(): Defaults {
-  const rows = all<{ key: string; value: string }>('SELECT key, value FROM settings');
-  const s: Record<string, string> = { ...DEFAULTS, ...Object.fromEntries(rows.map((r) => [r.key, r.value])) };
-  return { income: Number(s.income), needs_pct: Number(s.needs_pct), wants_pct: Number(s.wants_pct), savings_pct: Number(s.savings_pct) };
-}
-
-export function setDefault(key: keyof Defaults, value: number) {
-  run('INSERT INTO settings (key, value) VALUES (:key, :value) ON CONFLICT (key) DO UPDATE SET value = excluded.value', { key, value: String(value) });
 }

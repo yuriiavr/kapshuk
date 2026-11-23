@@ -1,4 +1,4 @@
-// Базові потреби: один список на всі місяці, сума може змінюватись, галочка «сплачено» — на кожен місяць
+// Постійні платежі: один список на всі місяці, сума може змінюватись, галочка «сплачено» — на кожен місяць
 import { useState } from 'react';
 import { api, type Need } from '../api.ts';
 import { dayShort, money, monthIn } from '../format.ts';
@@ -8,14 +8,13 @@ export function Needs() {
   const { data, month, act } = useApp();
   const s = data.summary;
   const [edit, setEdit] = useState<Need | 'new' | null>(null);
-  const free = s.buckets.needs.left - s.needs_plan.left;
 
   return (
     <section>
       <div className="sum">
         <span>Сплачено <b>{s.needs_plan.paid_count} з {s.needs_plan.count}</b></span>
         <span>ще сплатити <b>{money(s.needs_plan.left)}</b></span>
-        <span>на продукти й інше <b className={free < 0 ? 'neg' : ''}>{money(free)}</b></span>
+        <span>разом за місяць <b>{money(s.needs_plan.total)}</b></span>
       </div>
       {s.needs.length === 0 ? (
         <Empty>Додай обов'язкові платежі: оренду, комуналку, інтернет, садочок. Список один на всі місяці — щомісяця лише ставиш галочки.</Empty>
@@ -23,7 +22,7 @@ export function Needs() {
         <ul className="list">
           {s.needs.map((n) => (
             <li key={n.id} className={n.paid ? 'done' : ''}>
-              <Check checked={n.paid} label={`${n.title}: сплачено`} color="var(--needs)"
+              <Check checked={n.paid} label={`${n.title}: сплачено`} color="var(--accent)"
                 onChange={(paid) => act(() => api.put(`/api/needs/${n.id}/months/${month}`, { paid }))} />
               <button className="row-main" onClick={() => setEdit(n)}>
                 <span className="t">{n.title}{n.once && <i className="chip">разово</i>}</span>

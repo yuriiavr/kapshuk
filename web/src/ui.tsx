@@ -33,6 +33,11 @@ const paths = {
   cash: 'M3 7h18v10H3zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M6 7v10M18 7v10',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v5M16 3v5',
   heart: 'M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z',
+  camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 10.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7',
+  receipt: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3',
+  sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z',
+  image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01',
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4',
 } as const;
 
 export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: number }) {
@@ -45,18 +50,25 @@ export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: num
 
 // ── Вікно знизу (на ПК — посередині) ──
 
+let openSheets = 0;
+
 export function Sheet({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      const wraps = document.querySelectorAll('.sheet-wrap');
+      if (e.key === 'Escape' && wraps[wraps.length - 1]?.contains(box.current)) onClose();
+    };
     window.addEventListener('keydown', onKey);
     const prev = document.activeElement as HTMLElement | null;
     box.current?.querySelector<HTMLElement>('input, textarea, select, button:not(.x)')?.focus({ preventScroll: true });
+    // Вікно може відкритись поверх іншого (чек з операції) — прокрутку повертаємо, коли закриється останнє
+    openSheets++;
     document.body.classList.add('locked');
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.classList.remove('locked');
+      if (--openSheets === 0) document.body.classList.remove('locked');
       prev?.focus?.({ preventScroll: true });
     };
   }, [onClose]);
@@ -145,6 +157,16 @@ export function Progress({ value, max, kind }: { value: number; max: number; kin
   const pct = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : value > 0 ? 100 : 0;
   return (
     <div className={`progress ${kind} ${max > 0 && value > max ? 'over' : ''}`}>
+      <i style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/** Смужка частки: value із max, колір — категорії */
+export function Bar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+  return (
+    <div className="bar" style={{ '--c': color } as CSSProperties}>
       <i style={{ width: `${pct}%` }} />
     </div>
   );

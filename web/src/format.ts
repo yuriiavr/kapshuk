@@ -69,17 +69,12 @@ export function ago(unix: number | null) {
   return dayShort(unix);
 }
 
-export const BUCKETS = {
-  needs: { title: 'Базові потреби', short: 'Потреби' },
-  wants: { title: 'На себе', short: 'На себе' },
-  savings: { title: 'Заощадження', short: 'Заощадження' },
-} as const;
+export { CATEGORIES, CATEGORY_KEYS, ITEM_GROUPS, ITEM_GROUP_KEYS } from '../../server/categories.ts';
 
-export const TX_BUCKETS: Record<TxBucket, { title: string; hint: string }> = {
-  needs: { title: 'Потреби', hint: 'продукти, комуналка, транспорт, ліки' },
-  wants: { title: 'На себе', hint: 'покупки для сім\'ї, кафе, розваги' },
-  savings: { title: 'Заощадження', hint: 'банки й відкладене' },
+// Операції, що не є витратами: їх не ділимо на категорії
+export const KINDS: Record<Exclude<TxBucket, 'spend'>, { title: string; hint: string }> = {
   income: { title: 'Дохід', hint: 'зарплата, надходження' },
-  internal: { title: 'Свої перекази', hint: 'між своїми картками й сім\'єю' },
+  savings: { title: 'У банку', hint: 'відкладене в банки Monobank' },
+  internal: { title: 'Свої перекази', hint: "між своїми картками й сім'єю" },
   ignore: { title: 'Не рахувати', hint: 'не враховувати ніде' },
 };

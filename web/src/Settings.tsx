@@ -1,39 +1,15 @@
-// Налаштування: типовий план, сім'я з Monobank, запам'ятані магазини
+// Налаштування: сім'я з Monobank, запам'ятані магазини
 import { useEffect, useState } from 'react';
-import { api, type Member } from './api.ts';
-import { ago, money, TX_BUCKETS } from './format.ts';
-import { Field, Icon, MoneyField, Sheet, Switch, useApp } from './ui.tsx';
-import type { TxBucket } from './api.ts';
+import { api, type Category, type Member, type TxBucket } from './api.ts';
+import { ago, CATEGORIES, KINDS, money } from './format.ts';
+import { Field, Icon, Sheet, Switch, useApp } from './ui.tsx';
 
 export function Settings({ onClose }: { onClose: () => void }) {
   const { data, act } = useApp();
-  const d = data.defaults;
-  const [income, setIncome] = useState<number | null>(d.income);
-  const [pct, setPct] = useState({ needs_pct: d.needs_pct, wants_pct: d.wants_pct, savings_pct: d.savings_pct });
   const [adding, setAdding] = useState(false);
-  const total = pct.needs_pct + pct.wants_pct + pct.savings_pct;
-  const changed = income !== d.income || pct.needs_pct !== d.needs_pct || pct.wants_pct !== d.wants_pct || pct.savings_pct !== d.savings_pct;
 
   return (
     <Sheet title="Налаштування" onClose={onClose} wide>
-      <h3>Типовий план</h3>
-      <MoneyField label="Дохід сім'ї на місяць" value={income} onChange={setIncome} hint="Діє на всі місяці, де план не змінено окремо. Минулі місяці лишаються як були." />
-      <div className="pcts">
-        {([['needs_pct', 'Потреби', 'needs'], ['wants_pct', 'На себе', 'wants'], ['savings_pct', 'Заощадження', 'savings']] as const).map(([k, title, cls]) => (
-          <label key={k} className={`pct ${cls}`}>
-            <span>{title}</span>
-            <span className="pct-in"><input inputMode="numeric" value={String(pct[k])} onChange={(e) => setPct({ ...pct, [k]: Number(e.target.value.replace(/\D/g, '')) || 0 })} />%</span>
-            <small>{money(Math.round(((income ?? 0) * pct[k]) / 100))}</small>
-          </label>
-        ))}
-      </div>
-      {total !== 100 && <p className="warn">Разом {total}% — має бути 100%</p>}
-      {changed && (
-        <div className="actions">
-          <button className="btn primary" disabled={income == null || total !== 100} onClick={() => act(() => api.put('/api/defaults', { income, ...pct }))}>Зберегти план</button>
-        </div>
-      )}
-
       <h3>Сім'я та Monobank</h3>
       <p className="hint">Кожен підключає свій Monobank сам: картки й банки підтягуються кожні кілька хвилин. Перекази між вами не рахуються витратами.</p>
       <div className="members">
@@ -116,7 +92,7 @@ function MemberCard({ m }: { m: Member }) {
         <div className="accounts">
           {cards.map((a) => (
             <Switch key={a.id} on={a.include} disabled={a.currency !== 980} title={a.title}
-              hint={a.currency !== 980 ? 'Валютні картки в бюджет не йдуть' : `${money(a.balance, { currency: a.currency })} · ${a.include ? 'у бюджеті' : 'не рахується'}`}
+              hint={a.currency !== 980 ? 'Валютні картки не рахуються' : `${money(a.balance, { currency: a.currency })} · ${a.include ? 'рахується' : 'не рахується'}`}
               onChange={(include) => act(() => api.patch(`/api/accounts/${encodeURIComponent(a.id)}`, { include }))} />
           ))}
           {jars.map((a) => (
@@ -155,7 +131,7 @@ function MemberCard({ m }: { m: Member }) {
 
 function Rules() {
   const { version, act } = useApp();
-  const [rules, setRules] = useState<{ pattern: string; bucket: TxBucket }[]>([]);
+  const [rules, setRules] = useState<{ pattern: string; bucket: TxBucket; category: Category | null }[]>([]);
   useEffect(() => {
     api.get<typeof rules>('/api/rules').then(setRules).catch(() => {});
   }, [version]);
@@ -166,11 +142,16 @@ function Rules() {
       <ul className="list compact">
         {rules.map((r) => (
           <li key={r.pattern}>
-            <span className="row-main static"><span className="t">{r.pattern}</span><small>→ {TX_BUCKETS[r.bucket]?.title ?? r.bucket}</small></span>
+            <span className="row-main static"><span className="t">{r.pattern}</span><small>→ {ruleTitle(r)}</small></span>
             <button className="icon-btn" aria-label={`Забути ${r.pattern}`} onClick={() => act(() => api.del(`/api/rules?pattern=${encodeURIComponent(r.pattern)}`))}><Icon name="trash" size={18} /></button>
           </li>
         ))}
       </ul>
     </>
   );
+}
+
+function ruleTitle(r: { bucket: TxBucket; category: Category | null }) {
+  if (r.bucket !== 'spend') return KINDS[r.bucket]?.title ?? r.bucket;
+  return r.category ? CATEGORIES[r.category]?.title ?? r.category : 'витрата (категорія з банку)';
 }

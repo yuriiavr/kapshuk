@@ -1,23 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, AuthError, type State } from './api.ts';
-import { addMonths, BUCKETS, money, monthLabel } from './format.ts';
-import { AppCtx, Icon, MoneyField, Progress, Sheet, useApp, type App as AppValue } from './ui.tsx';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { api, AuthError, type Category, type State } from './api.ts';
+import { addMonths, CATEGORIES, money, monthIn, monthLabel } from './format.ts';
+import { AppCtx, Icon, type App as AppValue } from './ui.tsx';
+import { plural, ReceiptButton } from './Receipt.tsx';
 import { Needs } from './tabs/Needs.tsx';
 import { Wants } from './tabs/Wants.tsx';
-import { Savings } from './tabs/Savings.tsx';
+import { Summary } from './tabs/Summary.tsx';
 import { Transactions } from './tabs/Transactions.tsx';
 import { Settings } from './Settings.tsx';
 
-type Tab = 'needs' | 'wants' | 'savings' | 'tx';
-const TABS: [Tab, string][] = [['needs', 'Потреби'], ['wants', 'На себе'], ['savings', 'Заощадження'], ['tx', 'Операції']];
-const TAB_KEY = 'kapshuk:tab';
+type Tab = 'tx' | 'sum' | 'needs' | 'wants';
+const TABS: [Tab, string][] = [['tx', 'Витрати'], ['sum', 'Підсумок'], ['needs', 'Платежі'], ['wants', 'Хочу купити']];
+const TAB_KEY = 'kapshuk:tab:v2';
 
 function savedTab(): Tab {
   try {
     const t = localStorage.getItem(TAB_KEY);
     if (TABS.some(([k]) => k === t)) return t as Tab;
   } catch {}
-  return 'needs';
+  return 'tx';
 }
 
 export function App() {
@@ -27,8 +28,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [tab, setTabState] = useState<Tab>(savedTab);
+  const [category, setCategory] = useState<Category | null>(null);
   const [settings, setSettings] = useState(false);
-  const [plan, setPlan] = useState(false);
   const monthRef = useRef(month);
   monthRef.current = month;
 
@@ -82,6 +83,10 @@ export function App() {
       localStorage.setItem(TAB_KEY, t);
     } catch {}
   };
+  const showCategory = (c: Category) => {
+    setCategory(c);
+    setTab('tx');
+  };
 
   if (auth === 'need') return <Login />;
   if (!data || !month) {
@@ -90,6 +95,8 @@ export function App() {
 
   const ctx: AppValue = { data, month, act, reload, version };
   const s = data.summary;
+  const cats = s.categories.filter((c) => c.total > 0);
+  const legend = cats.slice(0, 5);
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -106,52 +113,61 @@ export function App() {
           </div>
         </header>
 
-        <button className="income-card" onClick={() => setPlan(true)}>
-          <span className="income-main">
-            <small>Дохід на місяць{s.custom ? ' · свій план' : ''}</small>
-            <b>{s.income ? money(s.income) : 'Вкажи дохід'}</b>
-          </span>
-          <span className="income-side">
-            <small>надійшло</small>
-            <span>{money(s.income_actual)}</span>
-          </span>
-        </button>
-
-        <div className="buckets">
-          {(['needs', 'wants', 'savings'] as const).map((k) => {
-            const bk = s.buckets[k];
-            const saving = k === 'savings';
-            const over = !saving && bk.left < 0;
-            return (
-              <button key={k} className={`bucket ${k} ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
-                <span className="b-head"><span>{BUCKETS[k].short}</span><small>{bk.pct}%</small></span>
-                <b className={over ? 'neg' : ''}>{money(saving ? Math.max(0, bk.left) : bk.left)}</b>
-                <small className="b-sub">{saving ? (bk.left > 0 ? 'ще відкласти' : 'план виконано') : over ? 'перевитрата' : 'лишилось'}</small>
-                <Progress value={bk.spent} max={bk.allocated} kind={k} />
-                <small className="b-foot"><span className="word">{saving ? 'відкладено' : 'витрачено'} </span>{money(bk.spent)} з {money(bk.allocated)}</small>
-              </button>
-            );
-          })}
+        <div className="spent-card">
+          <div className="spent-head">
+            <span className="spent-main">
+              <small>Витрачено в {monthIn(month)}</small>
+              <b>{money(s.spent)}</b>
+            </span>
+            <span className="spent-side">
+              <small>надійшло</small>
+              <span className="pos">{money(s.income_actual)}</span>
+              {s.saved > 0 && <><small>у банки</small><span>{money(s.saved)}</span></>}
+            </span>
+          </div>
+          {cats.length > 0 && (
+            <>
+              <div className="stack" aria-hidden="true">
+                {cats.map((c) => <i key={c.category} style={{ flexGrow: c.total, background: CATEGORIES[c.category].color }} />)}
+              </div>
+              <div className="legend">
+                {legend.map((c) => (
+                  <button key={c.category} className={category === c.category && tab === 'tx' ? 'on' : ''} style={{ '--c': CATEGORIES[c.category].color } as CSSProperties}
+                    onClick={() => (category === c.category && tab === 'tx' ? setCategory(null) : showCategory(c.category))}>
+                    <i className="dot" /><span>{CATEGORIES[c.category].title}</span><b>{money(c.total)}</b>
+                  </button>
+                ))}
+                {cats.length > legend.length && (
+                  <button className="more" onClick={() => setTab('sum')}>
+                    <span>Ще {cats.length - legend.length} {plural(cats.length - legend.length, 'категорія', 'категорії', 'категорій')}</span>
+                    <b>{money(cats.slice(legend.length).reduce((sum, c) => sum + c.total, 0))}</b><Icon name="right" size={14} />
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         <nav className="tabs" role="tablist">
           {TABS.map(([k, title]) => (
             <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
               {title}
-              {k === 'tx' && s.unchecked > 0 && <i className="badge" title="Розкладено автоматично — перевір">{s.unchecked}</i>}
+              {k === 'needs' && s.needs_plan.count - s.needs_plan.paid_count > 0 && month === data.today && (
+                <i className="badge" title="Ще не сплачено">{s.needs_plan.count - s.needs_plan.paid_count}</i>
+              )}
             </button>
           ))}
         </nav>
 
         <main>
+          {tab === 'tx' && <Transactions category={category} setCategory={setCategory} />}
+          {tab === 'sum' && <Summary onCategory={showCategory} />}
           {tab === 'needs' && <Needs />}
           {tab === 'wants' && <Wants />}
-          {tab === 'savings' && <Savings openSettings={() => setSettings(true)} />}
-          {tab === 'tx' && <Transactions />}
         </main>
       </div>
 
-      {plan && <MonthPlan onClose={() => setPlan(false)} />}
+      <ReceiptButton className="fab" title="Сфотографувати чек"><Icon name="camera" size={22} />Чек</ReceiptButton>
       {settings && <Settings onClose={() => setSettings(false)} />}
       {error && <div className="toast" role="alert" onClick={() => setError(null)}>{error}</div>}
     </AppCtx.Provider>
@@ -164,49 +180,9 @@ function Login() {
     <div className="splash login">
       <img src="/icon.svg" alt="" width="72" height="72" />
       <h1>Капшук</h1>
-      <p>Сімейний бюджет. Відкривається з панелі Home Assistant, або увійди тут своїм входом у HA.</p>
+      <p>Витрати сім'ї: що, де й за скільки купуємо. Відкривається з панелі Home Assistant, або увійди тут своїм входом у HA.</p>
       {expired && <p className="warn">{expired === 'expired' ? 'Посилання входу вже використане чи застаріле.' : 'Не вдалося увійти через HA.'}</p>}
       <a className="btn primary" href="/login">Увійти через Home Assistant</a>
     </div>
-  );
-}
-
-/** План місяця: дохід і відсотки лише на цей місяць */
-function MonthPlan({ onClose }: { onClose: () => void }) {
-  const { data, month, act } = useApp();
-  const s = data.summary;
-  const [income, setIncome] = useState<number | null>(s.income);
-  const [pct, setPct] = useState({ needs: s.buckets.needs.pct, wants: s.buckets.wants.pct, savings: s.buckets.savings.pct });
-  const total = pct.needs + pct.wants + pct.savings;
-  const valid = income != null && total === 100;
-  const d = data.defaults;
-
-  const save = async (asDefault: boolean) => {
-    const body = { income, needs_pct: pct.needs, wants_pct: pct.wants, savings_pct: pct.savings };
-    if (await act(() => (asDefault ? api.put('/api/defaults', body).then(() => api.put(`/api/months/${month}`, { reset: true })) : api.put(`/api/months/${month}`, body)))) onClose();
-  };
-
-  return (
-    <Sheet title={`План: ${monthLabel(month)}`} onClose={onClose}>
-      <MoneyField label="Дохід сім'ї на місяць" value={income} onChange={setIncome} hint={`Типово ${money(d.income)}. Розподіляється на кошики нижче.`} />
-      <div className="pcts">
-        {(['needs', 'wants', 'savings'] as const).map((k) => (
-          <label key={k} className={`pct ${k}`}>
-            <span>{BUCKETS[k].short}</span>
-            <span className="pct-in">
-              <input inputMode="numeric" value={String(pct[k])} onChange={(e) => setPct({ ...pct, [k]: Number(e.target.value.replace(/\D/g, '')) || 0 })} />%
-            </span>
-            <small>{money(Math.round(((income ?? 0) * pct[k]) / 100))}</small>
-          </label>
-        ))}
-      </div>
-      {total !== 100 && <p className="warn">Разом {total}% — має бути 100%</p>}
-      <p className="hint">Не вкладаєтесь? Перекинути суму між кошиками на цей місяць можна в «Заощадження → Перерозподіл».</p>
-      <div className="actions">
-        {s.custom && <button className="btn" onClick={() => act(() => api.put(`/api/months/${month}`, { reset: true })).then((ok) => ok && onClose())}>Як типово</button>}
-        <button className="btn" disabled={!valid} onClick={() => save(true)}>Зробити типовим</button>
-        <button className="btn primary" disabled={!valid} onClick={() => save(false)}>Лише цей місяць</button>
-      </div>
-    </Sheet>
   );
 }

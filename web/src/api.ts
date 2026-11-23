@@ -1,13 +1,21 @@
 // Запити до сервера Капшука. Сесія — кука, а якщо сторінку відкрили з панелі HA, ще й токен з адреси (#s=…):
 // у вбудованій сторінці WebKit може не зберегти куку.
-import type { monthSummary, Tx, Need, Want, Move, Jar } from '../../server/budget.ts';
+import type { monthSummary, Tx, Need, Want, Jar, CategorySum } from '../../server/budget.ts';
 import type { members } from '../../server/api.ts';
-import type { Defaults, TxBucket } from '../../server/db.ts';
+import type { TxBucket } from '../../server/db.ts';
+import type { Candidate, Item, monthItems } from '../../server/items.ts';
+import type { Receipt, ReceiptItem } from '../../server/ai.ts';
+import type { Category, ItemGroup } from '../../server/categories.ts';
 
 export type Summary = ReturnType<typeof monthSummary>;
 export type Member = ReturnType<typeof members>[number];
-export type { Tx, Need, Want, Move, Jar, Defaults, TxBucket };
-export type State = { today: string; summary: Summary; defaults: Defaults; wishlist: Want[]; members: Member[] };
+export type MonthItems = ReturnType<typeof monthItems>;
+export type { Tx, Need, Want, Jar, CategorySum, TxBucket, Candidate, Item, Receipt, ReceiptItem, Category, ItemGroup };
+export type State = { today: string; summary: Summary; wishlist: Want[]; members: Member[] };
+export type Advice = { text: string; created_at: number };
+export type MonthReport = { categories: CategorySum[]; items: MonthItems; merchants: { description: string; total: number; n: number }[]; advice: Advice | null };
+export type Scan = { image: string; receipt: Receipt; candidates: Candidate[]; match: string | null };
+export type TxItems = { items: Item[]; receipt: { id: number; store: string | null; time: number | null; total: number | null; has_image: number } | null };
 
 const KEY = 'kapshuk:session';
 let session: string | null = null;
@@ -52,6 +60,12 @@ export const api = {
   patch: <T = unknown>(path: string, body: unknown) => call<T>('PATCH', path, body),
   del: <T = unknown>(path: string) => call<T>('DELETE', path),
   state: (month: string | null) => call<State>('GET', `/api/state${month ? `?month=${month}` : ''}`),
+  /** Фото чека: <img> не надішле заголовок сесії, тож тягнемо самі й показуємо через blob: */
+  async image(path: string) {
+    const res = await fetch(path, { headers: session ? { 'X-Kapshuk-Session': session } : {}, credentials: 'same-origin' });
+    if (!res.ok) throw new Error('Фото не відкрилось');
+    return URL.createObjectURL(await res.blob());
+  },
   async logout() {
     await fetch('/logout', { method: 'POST', headers: session ? { 'X-Kapshuk-Session': session } : {} }).catch(() => {});
     session = null;

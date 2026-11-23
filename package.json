@@ -2,7 +2,7 @@
   "name": "kapshuk",
   "version": "0.1.0",
   "private": true,
-  "description": "Капшук — сімейний бюджет 50/30/20 з Monobank, для Home Assistant",
+  "description": "Капшук — витрати сім'ї з Monobank і чеків (ШІ читає товари), для Home Assistant",
   "type": "module",
   "engines": {
     "node": ">=24"
